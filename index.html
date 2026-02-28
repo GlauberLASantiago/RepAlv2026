@@ -1,0 +1,257 @@
+import React, { useState, useEffect } from 'react';
+import { ClipboardCopy, Calendar, Music, AlertCircle, CheckCircle2, Loader2, Info } from 'lucide-react';
+
+const App = () => {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [repertorioData, setRepertorioData] = useState(null);
+  const [copyStatus, setCopyStatus] = useState(false);
+
+  const SHEET_ID = '14N3k3ZOUnL9QLWP3j2Qrns1G2W7u0JV4';
+  const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(GVIZ_URL);
+      const text = await response.text();
+      
+      const jsonData = JSON.parse(text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1));
+      
+      const rows = jsonData.table.rows;
+      if (!rows || rows.length === 0) {
+        throw new Error("Nenhum dado encontrado na planilha.");
+      }
+
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+
+      let targetDate = null;
+      let entries = [];
+
+      // Lógica para encontrar a data (Hoje prioritário, senão próxima)
+      for (let row of rows) {
+        const cellA = row.c[0];
+        if (cellA && cellA.v) {
+          const dateVal = parseGoogleDate(cellA.v);
+          if (dateVal && dateVal.getTime() >= now.getTime()) {
+            targetDate = dateVal;
+            break; 
+          }
+        }
+      }
+
+      if (!targetDate) {
+        for (let i = rows.length - 1; i >= 0; i--) {
+          const cellA = rows[i].c[0];
+          if (cellA && cellA.v) {
+            targetDate = parseGoogleDate(cellA.v);
+            if (targetDate) break;
+          }
+        }
+      }
+
+      if (targetDate) {
+        const targetDateString = targetDate.toDateString();
+        rows.forEach(row => {
+          const cellA = row.c[0];
+          const cellB = row.c[1]; 
+          const cellC = row.c[2]; 
+
+          if (cellA && cellA.v) {
+            const dateVal = parseGoogleDate(cellA.v);
+            if (dateVal && dateVal.toDateString() === targetDateString) {
+              entries.push({
+                label: cellB ? cellB.v : "Evento",
+                content: cellC ? cellC.v : "Repertório não informado"
+              });
+            }
+          }
+        });
+
+        setRepertorioData({
+          date: targetDate,
+          formattedDate: formatDate(targetDate),
+          entries: entries,
+          isToday: targetDate.getTime() === now.getTime(),
+          isPast: targetDate.getTime() < now.getTime()
+        });
+      }
+
+    } catch (err) {
+      console.error(err);
+      setError("Não foi possível carregar o repertório. Verifique a planilha.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const parseGoogleDate = (value) => {
+    if (typeof value === 'string' && value.startsWith('Date')) {
+      const parts = value.match(/\d+/g);
+      return new Date(parts[0], parts[1], parts[2]);
+    }
+    const d = new Date(value);
+    if (!isNaN(d.getTime())) {
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+    return null;
+  };
+
+  const formatDate = (date) => {
+    const d = date.getDate().toString().padStart(2, '0');
+    const m = (date.getMonth() + 1).toString().padStart(2, '0');
+    const y = date.getFullYear().toString().slice(-2);
+    return `${d}/${m}/${y}`;
+  };
+
+  const copyToClipboard = () => {
+    if (!repertorioData) return;
+
+    let textToCopy = `🎶 *Coral Alvorada*\nRepertório para o dia ${repertorioData.formattedDate}\n`;
+    
+    repertorioData.entries.forEach(entry => {
+      textToCopy += `\n*${entry.label}*\n${entry.content}\n`;
+    });
+    
+    const textArea = document.createElement("textarea");
+    textArea.value = textToCopy.trim();
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      setCopyStatus(true);
+      setTimeout(() => setCopyStatus(false), 3000);
+    } catch (err) {
+      console.error('Erro ao copiar', err);
+    }
+    document.body.removeChild(textArea);
+  };
+
+  return (
+    <div className="min-h-screen bg-emerald-950 flex items-center justify-center p-4 font-sans text-slate-900">
+      <div className="max-w-lg w-full bg-white rounded-3xl shadow-2xl overflow-hidden border border-emerald-900/20">
+        
+        {/* Header */}
+        <div className="bg-emerald-800 p-6 text-white text-center relative">
+          <div className="absolute top-0 left-0 w-full h-1 bg-emerald-400 opacity-30"></div>
+          <h1 className="text-3xl font-black tracking-tight mb-1">
+            Coral Alvorada
+          </h1>
+          <div className="flex items-center justify-center gap-2 text-emerald-100/80 text-sm">
+            <Music size={16} />
+            <span>Repertório Atualizado</span>
+          </div>
+        </div>
+
+        <div className="p-6">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+              <Loader2 className="animate-spin mb-4 text-emerald-600" size={48} />
+              <p className="animate-pulse font-medium text-emerald-800">Verificando agenda...</p>
+            </div>
+          ) : error ? (
+            <div className="bg-red-50 border border-red-100 rounded-2xl p-6 text-center">
+              <AlertCircle className="mx-auto text-red-500 mb-2" size={32} />
+              <p className="text-red-700 font-medium">{error}</p>
+              <button 
+                onClick={fetchData}
+                className="mt-4 px-6 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
+              >
+                Tentar novamente
+              </button>
+            </div>
+          ) : repertorioData ? (
+            <div className="space-y-6">
+              
+              {/* Cabeçalho de Data */}
+              <div className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${repertorioData.isToday ? 'bg-emerald-600 text-white border-emerald-400 shadow-md shadow-emerald-200' : 'bg-emerald-50 border-emerald-100'}`}>
+                <div className="flex items-center gap-3">
+                  <div className={`${repertorioData.isToday ? 'bg-white text-emerald-700' : 'bg-emerald-700 text-white'} p-2.5 rounded-xl shadow-sm`}>
+                    <Calendar size={22} />
+                  </div>
+                  <div>
+                    <p className={`text-[10px] font-bold uppercase tracking-widest ${repertorioData.isToday ? 'text-emerald-100' : 'text-emerald-700'}`}>
+                      {repertorioData.isToday ? 'Programação de Hoje' : 'Próxima Programação'}
+                    </p>
+                    <p className={`text-2xl font-black leading-none mt-1 ${repertorioData.isToday ? 'text-white' : 'text-emerald-900'}`}>
+                      {repertorioData.formattedDate}
+                    </p>
+                  </div>
+                </div>
+                {repertorioData.isPast && (
+                  <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-[10px] font-bold uppercase">
+                    Histórico
+                  </span>
+                )}
+              </div>
+
+              {/* Lista de Repertório */}
+              <div className="space-y-4">
+                {repertorioData.entries.map((entry, idx) => (
+                  <div key={idx} className="bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                    <div className="bg-emerald-100/40 px-4 py-2 flex items-center gap-2 border-b border-slate-200">
+                      <Info size={14} className="text-emerald-700" />
+                      <span className="text-xs font-black text-emerald-800 uppercase tracking-tight">
+                        {entry.label}
+                      </span>
+                    </div>
+                    <div className="p-4 text-slate-700 whitespace-pre-wrap leading-relaxed text-sm font-medium">
+                      {entry.content}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Botão de Cópia (Cor Azul) */}
+              <div className="pt-2">
+                <button
+                  onClick={copyToClipboard}
+                  className={`w-full py-5 rounded-2xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg active:scale-95 ${
+                    copyStatus 
+                      ? 'bg-emerald-600 text-white shadow-emerald-200' 
+                      : 'bg-blue-600 text-white hover:bg-blue-700 hover:-translate-y-0.5 shadow-blue-200'
+                  }`}
+                >
+                  {copyStatus ? (
+                    <>
+                      <CheckCircle2 size={24} />
+                      <span className="text-lg">Texto Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <ClipboardCopy size={24} />
+                      <span className="text-lg">Copiar Repertório</span>
+                    </>
+                  )}
+                </button>
+                
+                {/* Citação Bíblica */}
+                <div className="mt-8 text-center px-4">
+                  <p className="text-slate-500 italic text-sm leading-relaxed">
+                    "Do Senhor é a salvação e sobre o teu povo a tua bênção"
+                  </p>
+                  <p className="text-slate-400 font-bold text-xs mt-1 uppercase tracking-widest">
+                    Salmos 3.8
+                  </p>
+                </div>
+              </div>
+
+            </div>
+          ) : (
+            <div className="text-center py-10">
+              <p className="text-slate-500 font-medium">Não há compromissos agendados.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
